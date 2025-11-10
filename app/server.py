@@ -156,7 +156,9 @@ class SecureChatServer:
             conn.send(json.dumps({"success": True}).encode())
 
             # Start session transcript using the exact exchanged message dicts
-            transcript = Transcript(f"server-{addr[0]}-{addr[1]}")
+            # Use deterministic session_id matching client: username-server-cn-timestamp
+            session_id = f"{username}-{get_common_name(self.cert)}-{hello_json['ts']}"
+            transcript = Transcript(session_id)
             # append the raw Hello JSON we received and the ServerHello dict we sent
             transcript.append(hello_json)
             transcript.append(server_hello)
@@ -177,14 +179,32 @@ class SecureChatServer:
             shared_session = get_shared_secret(s_priv, a_pub)
             session_key = derive_key(shared_session)  # AES session key (16 bytes)
 
-            # sign transcript and send our dh_server session with signature
-            exported = transcript.export()
+            # append DHClient and DHServer to transcript BEFORE signing
+            transcript.append(DHClient(e=str(a_pub)))
+            # Prepare DHServer message with signature
+            # First, create a temporary DHServer message without signature
+            temp_dh_server = DHServer(f=str(s_pub), signature=None)
+            transcript.append(temp_dh_server)
+
+            # First sign the transcript with placeholder signature
+            sig = sign_message(self.private_key, json.dumps(transcript.export_for_signing(), 
+                                                          sort_keys=True, separators=(",", ":")).encode())
+            
+            # Update the DHServer entry with actual signature and re-export
+            transcript.entries[-1].message.signature = b64e(sig)
+            exported = transcript.export_for_signing()
             exported_json = json.dumps(exported, sort_keys=True, separators=(",", ":")).encode()
-            sig = sign_message(self.private_key, exported_json)
+
+            try:
+                from .common.utils import sha256_hex
+                print(f"[DEBUG] server canonical transcript sha256: {sha256_hex(exported_json)}")
+                print(f"[DEBUG] server canonical transcript JSON: {exported_json.decode()}")
+            except Exception:
+                pass
+
+            # Send DH session with signature
             dh_server_session = {"type": "dh_session", "B": str(s_pub), "signature": b64e(sig)}
             conn.send(json.dumps(dh_server_session).encode())
-            transcript.append(DHClient(e=str(a_pub)))
-            transcript.append(DHServer(f=str(s_pub), signature=b64e(sig)))
 
             # store session
             self.sessions[transcript.session_id] = (session_key, transcript, client_cert)
@@ -237,8 +257,15 @@ class SecureChatServer:
                 transcript.append(receipt)
 
             # session ended; sign final transcript and save
-            final_export = transcript.export()
+            # sign final transcript using the same canonical export
+            final_export = transcript.export_for_signing()
             final_json = json.dumps(final_export, sort_keys=True, separators=(",", ":")).encode()
+            try:
+                from .common.utils import sha256_hex
+                print(f"[DEBUG] server final transcript sha256: {sha256_hex(final_json)}")
+                print(f"[DEBUG] server final transcript JSON: {final_json.decode()}")
+            except Exception:
+                pass
             final_sig = sign_message(self.private_key, final_json)
             sig_path = Path(f"{transcript.path}.sig")
             with open(sig_path, "wb") as f:

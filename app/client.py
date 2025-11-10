@@ -47,7 +47,7 @@ class SecureChatClient:
         self.transcript: Optional[Transcript] = None
         self.seq = 0
 
-    def connect_and_negotiate(self) -> bool:
+    def connect_and_negotiate(self, username: str) -> bool:
         """Connect, exchange certs, perform ephemeral DH for auth."""
         try:
             self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -108,7 +108,9 @@ class SecureChatClient:
 
             # start transcript and append the exact exchanged Hello/ServerHello dicts
             # store raw dicts so both sides sign the exact same canonical JSON
-            self.transcript = Transcript(f"client-{now_ms()}")
+            # Use a deterministic session_id for transcript (username-server-cn-timestamp)
+            session_id = f"{username}-{self.server_cn}-{hello['ts']}"
+            self.transcript = Transcript(session_id)
             # 'hello' is the dict we sent; 'server_hello_json' is the dict we received
             self.transcript.append(hello)
             self.transcript.append(server_hello_json)
@@ -169,15 +171,23 @@ class SecureChatClient:
             self.session_key = derive_key(shared)
 
             # verify server signed the transcript using its certificate public key
-            exported = self.transcript.export()
+            # Verify server signed the canonical transcript export (no append timestamps)
+            # append DH msgs to transcript BEFORE verifying signature
+            self.transcript.append(DHClient(e=str(pub)))
+            self.transcript.append(DHServer(f=str(server_B), signature=signature_b64))
+
+            exported = self.transcript.export_for_signing()
             exported_json = json.dumps(exported, sort_keys=True, separators=(",", ":")).encode()
+            # debug: print canonical transcript JSON hash to diagnose mismatches
+            try:
+                from .common.utils import sha256_hex
+                print(f"[DEBUG] client canonical transcript sha256: {sha256_hex(exported_json)}")
+                print(f"[DEBUG] client canonical transcript JSON: {exported_json.decode()}")
+            except Exception:
+                pass
             if not verify_signature(self.server_cert.public_key(), exported_json, b64d(signature_b64)):
                 print("Invalid transcript signature from server")
                 return False
-
-            # append DH msgs to transcript
-            self.transcript.append(DHClient(e=str(pub)))
-            self.transcript.append(DHServer(f=str(server_B), signature=signature_b64))
             return True
         except Exception as e:
             print(f"Session DH failed: {e}")
@@ -227,8 +237,14 @@ class SecureChatClient:
             self.sock.close()
             self.sock = None
         if self.transcript:
-            exported = self.transcript.export()
+            exported = self.transcript.export_for_signing()
             exported_json = json.dumps(exported, sort_keys=True, separators=(",", ":")).encode()
+            try:
+                from .common.utils import sha256_hex
+                print(f"[DEBUG] client final transcript sha256: {sha256_hex(exported_json)}")
+                print(f"[DEBUG] client final transcript JSON: {exported_json.decode()}")
+            except Exception:
+                pass
             final_sig = sign_message(self.private_key, exported_json)
             sig_path = Path(f"{self.transcript.path}.sig")
             with open(sig_path, "wb") as f:
@@ -251,7 +267,7 @@ def main():
 
     try:
         print(f"Connecting to {args.host}:{args.port}...")
-        if not client.connect_and_negotiate():
+        if not client.connect_and_negotiate(args.username):
             sys.exit(1)
 
         if not client.register_or_login(args.register, args.username):

@@ -92,9 +92,9 @@ class Transcript:
         # Update hash chain: hash(prev_hash || entry_hash)
         input_bytes = f"{self.current_hash}{entry.hash}".encode("utf-8")
         self.current_hash = sha256_hex(input_bytes)
-        
         self.entries.append(entry)
         self.save()
+        print(f"[DEBUG] transcript append: message hash={entry.hash}, chain={self.current_hash}")
         
         return self.current_hash
 
@@ -137,6 +137,22 @@ class Transcript:
             "created_at": self.entries[0].timestamp if self.entries else now_ms(),
             "hash": self.current_hash,
             "entries": [e.to_dict() for e in self.entries],
+        }
+
+    def export_for_signing(self) -> Dict[str, Any]:
+        """Export a canonical transcript representation used for signing/verification.
+
+        This export intentionally excludes per-append timestamps (which differ
+        across machines) and only includes the message content and hashes so the
+        produced JSON is identical on both client and server platforms.
+        """
+        return {
+            "session_id": self.session_id,
+            "hash": self.current_hash,
+            "entries": [
+                {"message": json.loads(e.json), "hash": e.hash}
+                for e in self.entries
+            ],
         }
 
     def verify_hash_chain(self) -> bool:
