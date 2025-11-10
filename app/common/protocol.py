@@ -8,53 +8,87 @@ operate on base64-encoded binary fields (e.g. DH public values,
 encrypted payloads, signatures).
 """
 
-from pydantic import BaseModel
 from typing import Optional
+from pydantic import BaseModel
 
 
-class Hello(BaseModel):
-	client: str
-	ts: int
+from pydantic.config import ConfigDict
+
+class Message(BaseModel):
+    """Base class for all protocol messages."""
+    model_config = ConfigDict(
+        frozen=False,  # Allow field updates
+        validate_assignment=True,  # Validate fields on assignment
+        extra='forbid',  # Don't allow extra fields
+        str_strip_whitespace=True,  # Strip whitespace from strings
+        validate_default=True  # Validate default values
+    )
 
 
-class ServerHello(BaseModel):
-	server: str
-	ts: int
+class Hello(Message):
+    """Client hello message.
+
+    Contains the client identity, timestamp, certificate (PEM),
+    and an optional random nonce for freshness.
+    """
+    client: str
+    ts: int
+    client_cert: Optional[str] = None
+    nonce: Optional[str] = None
 
 
-class Register(BaseModel):
-	username: str
-	password: str
+class ServerHello(Message):
+    """Server hello message.
+
+    Contains the server identity, timestamp, certificate (PEM),
+    and an optional random nonce for freshness.
+    """
+    server: str
+    ts: int
+    server_cert: Optional[str] = None
+    nonce: Optional[str] = None
 
 
-class Login(BaseModel):
-	username: str
-	password: str
+
+class Register(Message):
+    """Registration request."""
+    type: str = "register"  # Fixed value
+    username: str
+    password: str
 
 
-class DHClient(BaseModel):
-	# e: client's DH public value, base64-encoded
-	e: str
-	# optional nonce or additional data
-	nonce: Optional[str] = None
+class Login(Message):
+    """Login request."""
+    type: str = "login"  # Fixed value
+    username: str
+    password: str
 
 
-class DHServer(BaseModel):
-	# f: server's DH public value, base64-encoded
-	f: str
-	# signature on the handshake or transcript (base64)
-	signature: Optional[str] = None
+class DHClient(Message):
+    """Client DH key."""
+    # e: client's DH public value, base64-encoded
+    e: str
+    # optional nonce or additional data
+    nonce: Optional[str] = None
 
 
-class Msg(BaseModel):
-	seq: int
-	# encrypted payload (base64)
-	payload: str
-	# optional MAC or HMAC (base64)
-	mac: Optional[str] = None
+class DHServer(Message):
+    """Server DH key."""
+    # f: server's DH public value, base64-encoded
+    f: str
+    # signature on the handshake or transcript (base64)
+    signature: Optional[str] = None
 
 
-class Receipt(BaseModel):
-	seq: int
-	signature: str
+class Msg(Message):
+    """Encrypted message."""
+    seq: int
+    payload: str  # base64-encoded encrypted data
+    mac: Optional[str] = None  # optional MAC or HMAC (base64)
+
+
+class Receipt(Message):
+    """Message receipt."""
+    seq: int
+    signature: str  # base64-encoded signature
 

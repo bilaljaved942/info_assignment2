@@ -1,0 +1,31 @@
+{
+  "session_id": "server-127.0.0.1-60906",
+  "created_at": 1762784524527,
+  "hash": "4a79f120fe1531aa94ca39326782a02c8f973d2283cc3be6c86263badd254a93",
+  "entries": [
+    {
+      "timestamp": 1762784524527,
+      "message": {
+        "client": "client.local",
+        "ts": 1762784513500
+      },
+      "hash": "76c8ed47c199c27af8017105dbaf53ac62c539acc4d1d39486873324a4ec1638"
+    },
+    {
+      "timestamp": 1762784524527,
+      "message": {
+        "server": "server.local",
+        "ts": 1762784513501
+      },
+      "hash": "44b14948c168730d0bf60d7d5dc60e769c061f83067c285b018f775dfa05402a"
+    },
+    {
+      "timestamp": 1762784524531,
+      "message": {
+        "e": "YzFmODU4ZjYyNTlkYTM5MmVmNzM0YTRiZTMwNDc2ZGJjNzFlZjg5ZmQ5YTI1NDMxNjUxMzg1ZTgyNjVlMmM5YThhNGU1YWU4YjFkYjY3YjcxOGY4OTc4MjliMTk1NGQ4Y2Y1NTBmNjJmZTRkNmE0ZGQxYTE5Mzk4ZTk2MjcxMTljMjhjMWY1ZWRkZTI2NzY2OWJjMjZiYTRiMGMyODRhZTlmOGE3YTM1ZWRkYWI3ZjE1Njk1OGM4NDYzOTNiZDE5MGNkMDUwMjBjZDM5MDJmZjI1ZGI1OGYzN2ZmYjAxODdjMzkwZjhjYjY5ZGY5NDRlOGY2ZjJjODU0YzQ0ZmE2M2E3NTdjMmE5MmMyZWM5ODc5NzM1NTk4MGMwZGRjYTg5ZTkzNjNjMDgxNjliNDA5ZGYxNGU4ZjJlN2VkNjZkNWQxYTQyYTRiMzU4NTc0NGJkNjFhMzA1YjU0NTg1YWIzM2QzNjE5NDg0YzdjNWE5MWZmZmM3MjRjNGVlOThiZjM0ZjNhY2QzOTdlODg5NTdkZTg0NDg5ZTFkYmIwZTI5MzEyZTUyZjBmN2VjMzE1MTE0MGU5ZTdhZTYxZGZhYjgwZjRlMTQ3NWY2NzgyOGY5ZjVjMjM1MzlhNDFlMmVlMjZkMDRhZjA1MmIxMDk5MTZkOTNhMDAyYzE3ZmViYjdiZDQ=",
+        "nonce": null
+      },
+      "hash": "58fccd13ef34d26a25e308b9947bf0bdf5895f808190ce005692014b51f7fa7e"
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "session_id": "client-1762782753775",
+  "created_at": 1762782753775,
+  "hash": "fcd72573bca68d67c469169396f0b967fe7f6696b20757b13183e0d3a21c4b94",
+  "entries": [
+    {
+      "timestamp": 1762782753775,
+      "message": {
+        "client": "client.local",
+        "ts": 1762782753774
+      },
+      "hash": "68fa69232c15ac194c905397056586d079d102142bde2e6d7540913940c9491c"
+    },
+    {
+      "timestamp": 1762782753776,
+      "message": {
+        "server": "server.local",
+        "ts": 1762782753774
+      },
+      "hash": "d81707c9243d7262b81c30dbbdc39b9b597d506b61df2e5d8a8a80aafd3c1f85"
+    }
+  ]
+}

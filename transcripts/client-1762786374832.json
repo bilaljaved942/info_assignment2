@@ -1,0 +1,27 @@
+{
+  "session_id": "client-1762786374832",
+  "created_at": 1762786374833,
+  "hash": "44555b810875ce3e72d453d22e57783c9b26756c75d2def95b9179f59d1cc69f",
+  "entries": [
+    {
+      "timestamp": 1762786374833,
+      "message": {
+        "client": "client.local",
+        "client_cert": null,
+        "nonce": null,
+        "ts": 1762786374833
+      },
+      "hash": "ae43e7d6fb62149d2b4644b4cfd3eef4af33a0678762cf1f978d3b60574aa823"
+    },
+    {
+      "timestamp": 1762786374833,
+      "message": {
+        "nonce": null,
+        "server": "server.local",
+        "server_cert": null,
+        "ts": 1762786374833
+      },
+      "hash": "4608a41b6685bda723200ce5c8dbf0f746c6dd06da9144b0afdd22d994b6a40f"
+    }
+  ]
+}
