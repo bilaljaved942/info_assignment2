@@ -1,0 +1,33 @@
+{
+  "session_id": "test-session",
+  "created_at": 1762781424421,
+  "hash": "9801fc6d6a9ce6a1d3688c9780a4f3013c8a78ea6ff6aeab949641c78fd0b5dc",
+  "entries": [
+    {
+      "timestamp": 1762781424421,
+      "message": {
+        "client": "test.local",
+        "ts": 1762781424420
+      },
+      "hash": "d755f35bcfa663d3bb70fc96cf85b94f69ec859cd373444688bc31a8d7b87b39"
+    },
+    {
+      "timestamp": 1762781424421,
+      "message": {
+        "mac": null,
+        "payload": "dGVzdCBtZXNzYWdlIDE=",
+        "seq": 1
+      },
+      "hash": "33fe76e13cece3dfe853b8911dbea06193338fcde147b0a4af237af0f03d4b99"
+    },
+    {
+      "timestamp": 1762781424421,
+      "message": {
+        "mac": null,
+        "payload": "dGVzdCBtZXNzYWdlIDI=",
+        "seq": 2
+      },
+      "hash": "1f30f1c8539801f8c343cc3fc3700b05c6eb9edf3cc5f7e73a8f117f3e21457d"
+    }
+  ]
+}
