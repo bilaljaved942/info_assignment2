@@ -17,8 +17,6 @@ from typing import Optional
 
 from cryptography import x509
 from cryptography.hazmat.primitives import serialization
-from .common.utils import now_ms  
-
 
 from .common.protocol import Hello, ServerHello, DHClient, DHServer, Msg, Receipt
 from .common.utils import now_ms, b64e, b64d, sha256_hex
@@ -55,11 +53,11 @@ class SecureChatClient:
 
             # Send Hello with our cert PEM
             hello = {
-                 "client": get_common_name(self.cert),
-                 "ts": now_ms(),
-                 "client_cert": self.cert.public_bytes(encoding=serialization.Encoding.PEM).decode(),
-                 "nonce": b64e(secrets.token_bytes(16))
-                 }
+                "client": get_common_name(self.cert),
+                "ts": now_ms(),
+                "client_cert": self.cert.public_bytes(encoding=serialization.Encoding.PEM).decode(),
+                "nonce": b64e(secrets.token_bytes(16))
+            }
             
             self.sock.send(json.dumps(hello).encode())
 
@@ -107,11 +105,8 @@ class SecureChatClient:
             self.temp_key = derive_key(shared)  # used for encrypting credentials
 
             # start transcript and append the exact exchanged Hello/ServerHello dicts
-            # store raw dicts so both sides sign the exact same canonical JSON
-            # Use a deterministic session_id for transcript (username-server-cn-timestamp)
             session_id = f"{username}-{self.server_cn}-{hello['ts']}"
             self.transcript = Transcript(session_id)
-            # 'hello' is the dict we sent; 'server_hello_json' is the dict we received
             self.transcript.append(hello)
             self.transcript.append(server_hello_json)
 
@@ -124,7 +119,6 @@ class SecureChatClient:
             return False
 
     def register_or_login(self, is_register: bool, username: str) -> bool:
-        # prompt password
         try:
             password = getpass(f"Enter password for {username}: ")
             if not password:
@@ -170,27 +164,32 @@ class SecureChatClient:
             shared = get_shared_secret(priv, server_B)
             self.session_key = derive_key(shared)
 
-            # verify server signed the transcript using its certificate public key
-            # Verify server signed the canonical transcript export (no append timestamps)
-            # append DH msgs to transcript BEFORE verifying signature
+            # Append DHClient to transcript FIRST
             self.transcript.append(DHClient(e=str(pub)))
-            self.transcript.append(DHServer(f=str(server_B), signature=signature_b64))
-
-            exported = self.transcript.export_for_signing()
-            exported_json = json.dumps(exported, sort_keys=True, separators=(",", ":")).encode()
-            # debug: print canonical transcript JSON hash to diagnose mismatches
-            try:
-                from .common.utils import sha256_hex
-                print(f"[DEBUG] client canonical transcript sha256: {sha256_hex(exported_json)}")
-                print(f"[DEBUG] client canonical transcript JSON: {exported_json.decode()}")
-            except Exception:
-                pass
+            
+            # Verify signature BEFORE appending DHServer
+            # The signature covers: Hello + ServerHello + DHClient (3 entries)
+            exported_before_dhserver = self.transcript.export_for_signing()
+            exported_json = json.dumps(exported_before_dhserver, sort_keys=True, separators=(",", ":")).encode()
+            
+            print(f"[DEBUG] client verifying transcript with {len(self.transcript.entries)} entries")
+            print(f"[DEBUG] client verifying sha256: {sha256_hex(exported_json)}")
+            
+            # Verify server's signature over the 3-entry transcript
             if not verify_signature(self.server_cert.public_key(), exported_json, b64d(signature_b64)):
                 print("Invalid transcript signature from server")
                 return False
+            
+            print("✓ Server signature verified successfully!")
+            
+            # NOW append DHServer with the signature
+            self.transcript.append(DHServer(f=str(server_B), signature=signature_b64))
+            
             return True
         except Exception as e:
             print(f"Session DH failed: {e}")
+            import traceback
+            traceback.print_exc()
             return False
 
     def send_message(self, text: str) -> bool:
@@ -200,36 +199,48 @@ class SecureChatClient:
             self.seq += 1
             ts = now_ms()
             ct_b64 = encrypt_aes_ecb_b64(self.session_key, text.encode())
-            # compute digest = SHA256(seq||ts||ct)
+            
+            # Compute digest = SHA256(seq||ts||ct)
             digest = hashlib.sha256(f"{self.seq}{ts}{ct_b64}".encode()).digest()
             sig = sign_message(self.private_key, digest)
-            msg = {
+            
+            # Send message with signature
+            msg_to_send = {
                 "type": "msg",
                 "seq": self.seq,
                 "ts": ts,
                 "payload": ct_b64,
                 "signature": b64e(sig)
             }
-            self.sock.send(json.dumps(msg).encode())
+            self.sock.send(json.dumps(msg_to_send).encode())
+            
+            # Append to transcript (only seq and payload are stored in transcript)
             self.transcript.append(Msg(seq=self.seq, payload=ct_b64))
 
-            # wait for receipt
+            # Wait for receipt
             data = self.sock.recv(8192)
             if not data:
+                print("No receipt received")
                 return False
             receipt_json = json.loads(data.decode())
             receipt = Receipt(**receipt_json)
+            
             if receipt.seq != self.seq:
-                print("Receipt seq mismatch")
+                print(f"Receipt seq mismatch: got {receipt.seq}, expected {self.seq}")
                 return False
-            # verify receipt signature using server public key
-            if not verify_signature(self.server_cert.public_key(), f"{self.transcript.session_id}:{receipt.seq}".encode(), b64d(receipt.signature)):
+            
+            # Verify receipt signature using server public key
+            receipt_data = f"{self.transcript.session_id}:{receipt.seq}".encode()
+            if not verify_signature(self.server_cert.public_key(), receipt_data, b64d(receipt.signature)):
                 print("Invalid receipt signature")
                 return False
+            
             self.transcript.append(receipt)
             return True
         except Exception as e:
             print(f"Send failed: {e}")
+            import traceback
+            traceback.print_exc()
             return False
 
     def close(self):
@@ -239,12 +250,8 @@ class SecureChatClient:
         if self.transcript:
             exported = self.transcript.export_for_signing()
             exported_json = json.dumps(exported, sort_keys=True, separators=(",", ":")).encode()
-            try:
-                from .common.utils import sha256_hex
-                print(f"[DEBUG] client final transcript sha256: {sha256_hex(exported_json)}")
-                print(f"[DEBUG] client final transcript JSON: {exported_json.decode()}")
-            except Exception:
-                pass
+            print(f"[DEBUG] client final transcript sha256: {sha256_hex(exported_json)}")
+            
             final_sig = sign_message(self.private_key, exported_json)
             sig_path = Path(f"{self.transcript.path}.sig")
             with open(sig_path, "wb") as f:
@@ -286,9 +293,9 @@ def main():
                 if text:
                     ok = client.send_message(text)
                     if ok:
-                        print("Message sent and receipt verified")
+                        print("✓ Message sent and receipt verified")
                     else:
-                        print("Failed to send/verify message")
+                        print("✗ Failed to send/verify message")
             except KeyboardInterrupt:
                 break
 

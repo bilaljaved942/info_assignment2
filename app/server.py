@@ -163,6 +163,8 @@ class SecureChatServer:
             transcript.append(hello_json)
             transcript.append(server_hello)
 
+            print(f"[DEBUG] After Hello/ServerHello, transcript has {len(transcript.entries)} entries")
+
             # 5) Perform session DH: receive client's session DH public
             data = conn.recv(8192)
             if not data:
@@ -179,31 +181,39 @@ class SecureChatServer:
             shared_session = get_shared_secret(s_priv, a_pub)
             session_key = derive_key(shared_session)  # AES session key (16 bytes)
 
-            # append DHClient and DHServer to transcript BEFORE signing
+            # CRITICAL FIX: Append DHClient to transcript
             transcript.append(DHClient(e=str(a_pub)))
-            # Prepare DHServer message with signature
-            # First, create a temporary DHServer message without signature
-            temp_dh_server = DHServer(f=str(s_pub), signature=None)
-            transcript.append(temp_dh_server)
+            print(f"[DEBUG] After DHClient, transcript has {len(transcript.entries)} entries")
 
-            # First sign the transcript with placeholder signature
-            sig = sign_message(self.private_key, json.dumps(transcript.export_for_signing(), 
-                                                          sort_keys=True, separators=(",", ":")).encode())
+            # CRITICAL FIX: Sign the transcript BEFORE appending DHServer
+            # The signature is computed over: Hello + ServerHello + DHClient
+            # This is what the client will verify
+            exported_before_dhserver = transcript.export_for_signing()
+            exported_json = json.dumps(exported_before_dhserver, sort_keys=True, separators=(",", ":")).encode()
+
+            print(f"[DEBUG] Signing transcript with {len(transcript.entries)} entries")
+            print(f"[DEBUG] server signing sha256: {sha256_hex(exported_json)}")
+
+            # Sign the transcript (Hello + ServerHello + DHClient)
+            sig = sign_message(self.private_key, exported_json)
+            sig_b64 = b64e(sig)
+
+            # NOW append DHServer WITH the signature included
+            # This matches what the client does - it receives DHServer with signature populated
+            final_dh_server = DHServer(f=str(s_pub), signature=sig_b64)
+            transcript.append(final_dh_server)
+
+            print(f"[DEBUG] After DHServer, transcript has {len(transcript.entries)} entries")
+
+            # Export the final transcript (for debugging)
+            re_exported = transcript.export_for_signing()
+            re_exported_json = json.dumps(re_exported, sort_keys=True, separators=(",", ":")).encode()
             
-            # Update the DHServer entry with actual signature and re-export
-            transcript.entries[-1].message.signature = b64e(sig)
-            exported = transcript.export_for_signing()
-            exported_json = json.dumps(exported, sort_keys=True, separators=(",", ":")).encode()
+            print(f"[DEBUG] server canonical transcript sha256: {sha256_hex(re_exported_json)}")
+            print(f"[DEBUG] server canonical transcript JSON: {re_exported_json.decode()}")
 
-            try:
-                from .common.utils import sha256_hex
-                print(f"[DEBUG] server canonical transcript sha256: {sha256_hex(exported_json)}")
-                print(f"[DEBUG] server canonical transcript JSON: {exported_json.decode()}")
-            except Exception:
-                pass
-
-            # Send DH session with signature
-            dh_server_session = {"type": "dh_session", "B": str(s_pub), "signature": b64e(sig)}
+            # Send DH session response with signature to client
+            dh_server_session = {"type": "dh_session", "B": str(s_pub), "signature": sig_b64}
             conn.send(json.dumps(dh_server_session).encode())
 
             # store session
@@ -227,14 +237,8 @@ class SecureChatServer:
                     break
 
                 # verify signature: recompute h = SHA256(seq||ts||ct)
-                h_input = f"{msg.seq}{msg.ts}{msg.payload}".encode()
-                h = sha256_hex(h_input).encode()
-                sender_pub = client_cert.public_key()
-                if not verify_signature(sender_pub, h_input if False else sha256_hex(h_input).encode(), b64d(msg.signature)) and False:
-                    # The verify_signature implementation expects actual signature over bytes -- instead compute digest and use verify_signature properly.
-                    pass
-                # We'll verify correctly: recompute digest bytes
                 digest_bytes = __import__("hashlib").sha256(f"{msg.seq}{msg.ts}{msg.payload}".encode()).digest()
+                sender_pub = client_cert.public_key()
                 if not verify_signature(sender_pub, digest_bytes, b64d(msg.signature)):
                     print("Message signature verification failed")
                     break
@@ -253,19 +257,17 @@ class SecureChatServer:
                 # sign receipt and return
                 receipt_sig = sign_message(self.private_key, f"{transcript.session_id}:{seq_expected}".encode())
                 receipt = Receipt(seq=seq_expected, signature=b64e(receipt_sig))
+                # send receipt as plain JSON dict
                 conn.send(json.dumps(receipt.model_dump()).encode())
                 transcript.append(receipt)
 
             # session ended; sign final transcript and save
-            # sign final transcript using the same canonical export
             final_export = transcript.export_for_signing()
             final_json = json.dumps(final_export, sort_keys=True, separators=(",", ":")).encode()
-            try:
-                from .common.utils import sha256_hex
-                print(f"[DEBUG] server final transcript sha256: {sha256_hex(final_json)}")
-                print(f"[DEBUG] server final transcript JSON: {final_json.decode()}")
-            except Exception:
-                pass
+            
+            print(f"[DEBUG] server final transcript sha256: {sha256_hex(final_json)}")
+            print(f"[DEBUG] server final transcript JSON: {final_json.decode()}")
+            
             final_sig = sign_message(self.private_key, final_json)
             sig_path = Path(f"{transcript.path}.sig")
             with open(sig_path, "wb") as f:
@@ -274,6 +276,8 @@ class SecureChatServer:
 
         except Exception as e:
             print(f"Error handling client {addr}: {e}")
+            import traceback
+            traceback.print_exc()
 
 # helper: load cert from PEM bytes using cryptography
 def load_certificate_bytes(pem_bytes: bytes) -> x509.Certificate:
@@ -301,9 +305,11 @@ def main():
         server = SecureChatServer(args.host, args.port, args.cert, args.key, args.ca_cert)
         server.run()
     except KeyboardInterrupt:
-        print("Shutting down")
+        print("\nShutting down")
     except Exception as e:
         print(f"Server error: {e}")
+        import traceback
+        traceback.print_exc()
         sys.exit(1)
 
 if __name__ == "__main__":
