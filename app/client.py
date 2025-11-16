@@ -207,7 +207,7 @@ class SecureChatClient:
             receipt = Receipt(**receipt_json)
 
             if receipt.seq != self.seq:
-                print(f"Receipt seq mismatch: got {receipt.seq}, expected {self.seq}")
+                #print(f"Receipt seq mismatch: got {receipt.seq}, expected {self.seq}")
                 return False
 
             receipt_data = f"{self.transcript.session_id}:{receipt.seq}".encode()

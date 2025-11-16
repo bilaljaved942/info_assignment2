@@ -141,7 +141,7 @@ class SecureChatServer:
             transcript.append(hello_json)
             transcript.append(server_hello)
 
-            print(f"[DEBUG] After Hello/ServerHello, transcript has {len(transcript.entries)} entries")
+            #print(f"[DEBUG] After Hello/ServerHello, transcript has {len(transcript.entries)} entries")
 
             data = conn.recv(8192)
             if not data:
@@ -159,7 +159,7 @@ class SecureChatServer:
             session_key = derive_key(shared_session)
 
             transcript.append(DHClient(e=str(a_pub)))
-            print(f"[DEBUG] After DHClient, transcript has {len(transcript.entries)} entries")
+            #print(f"[DEBUG] After DHClient, transcript has {len(transcript.entries)} entries")
 
             exported_before_dhserver = transcript.export_for_signing()
             exported_json = json.dumps(
@@ -168,8 +168,8 @@ class SecureChatServer:
                 separators=(",", ":")
             ).encode()
 
-            print(f"[DEBUG] Signing transcript with {len(transcript.entries)} entries")
-            print(f"[DEBUG] server signing sha256: {sha256_hex(exported_json)}")
+            #print(f"[DEBUG] Signing transcript with {len(transcript.entries)} entries")
+            #print(f"[DEBUG] server signing sha256: {sha256_hex(exported_json)}")
 
             sig = sign_message(self.private_key, exported_json)
             sig_b64 = b64e(sig)
@@ -177,7 +177,7 @@ class SecureChatServer:
             final_dh_server = DHServer(f=str(s_pub), signature=sig_b64)
             transcript.append(final_dh_server)
 
-            print(f"[DEBUG] After DHServer, transcript has {len(transcript.entries)} entries")
+            #print(f"[DEBUG] After DHServer, transcript has {len(transcript.entries)} entries")
 
             dh_server_session = {"type": "dh_session", "B": str(s_pub), "signature": sig_b64}
             conn.send(json.dumps(dh_server_session).encode())
@@ -234,8 +234,8 @@ class SecureChatServer:
                 separators=(",", ":")
             ).encode()
 
-            print(f"[DEBUG] server final transcript sha256: {sha256_hex(final_json)}")
-            print(f"[DEBUG] server final transcript JSON: {final_json.decode()}")
+            #print(f"[DEBUG] server final transcript sha256: {sha256_hex(final_json)}")
+            #print(f"[DEBUG] server final transcript JSON: {final_json.decode()}")
 
             final_sig = sign_message(self.private_key, final_json)
             sig_path = Path(f"{transcript.path}.sig")
