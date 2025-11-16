@@ -82,9 +82,12 @@ class DHServer(Message):
 
 class Msg(Message):
     """Encrypted message."""
+    type: str = "msg"
     seq: int
-    payload: str  # base64-encoded encrypted data
-    mac: Optional[str] = None  # optional MAC or HMAC (base64)
+    ts: int
+    payload: str            # base64-encoded encrypted data
+    signature: str          # base64-encoded signature
+
 
 
 class Receipt(Message):

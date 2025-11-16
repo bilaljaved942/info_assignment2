@@ -1,9 +1,3 @@
-"""Secure chat server implementing control-plane, DH, encrypted registration/login,
-session DH, per-message signing/verification, receipts, transcripts and transcript signing.
-
-Run:
-    python -m app.server --host 127.0.0.1 --port 9000
-"""
 import argparse
 import json
 import os
@@ -27,18 +21,17 @@ from .storage.transcript import Transcript
 
 import secrets
 
+
 class SecureChatServer:
     def __init__(self, host: str, port: int, cert_path: str, key_path: str, ca_cert_path: str):
         self.host = host
         self.port = port
 
-        # load server identity and CA
         self.cert = load_certificate(cert_path)
-        self.private_key = load_private_key(key_path)  # returns key object
+        self.private_key = load_private_key(key_path)
         self.ca_cert = load_certificate(ca_cert_path)
 
         self.db = Database()
-        # map session_id -> (session_key, transcript, peer_cert)
         self.sessions: Dict[str, Tuple[bytes, Transcript, x509.Certificate]] = {}
 
     def run(self):
@@ -62,19 +55,17 @@ class SecureChatServer:
     def handle_client(self, conn: socket.socket, addr: Tuple[str, int]):
         print(f"New connection from {addr[0]}:{addr[1]}")
         try:
-            # 1) Expect Hello with client certificate and nonce
             data = conn.recv(8192)
             if not data:
                 return
             hello_json = json.loads(data.decode())
             hello = Hello(**hello_json)
-            # hello.client_cert expected to be PEM string, hello.nonce base64
+
             client_cert_pem = hello_json.get("client_cert")
             if not client_cert_pem:
                 conn.send(json.dumps({"error": "Missing client certificate"}).encode())
                 return
 
-            # Load client cert and validate it against CA
             client_cert = load_certificate_bytes(client_cert_pem.encode())
             try:
                 validate_certificate(client_cert, self.ca_cert)
@@ -84,7 +75,6 @@ class SecureChatServer:
 
             print(f"Got Hello from {get_common_name(client_cert)}")
 
-            # 2) Send ServerHello with our cert PEM and nonce
             server_nonce = b64e(secrets.token_bytes(16))
             server_hello = {
                 "type": "server_hello",
@@ -95,7 +85,6 @@ class SecureChatServer:
             }
             conn.send(json.dumps(server_hello).encode())
 
-            # 3) Perform ephemeral DH for control plane (authentication) - get client's ephemeral DH
             data = conn.recv(8192)
             if not data:
                 return
@@ -104,19 +93,16 @@ class SecureChatServer:
                 conn.send(json.dumps({"error": "expected dh_temp"}).encode())
                 return
 
-            # server ephemeral DH
             priv = gen_private_key()
             pub = get_public_value(priv)
-            # compute shared temp secret
+
             client_A = int(dh_client_json["A"])
             shared = get_shared_secret(priv, client_A)
-            temp_key = derive_key(shared)  # 16 bytes
+            temp_key = derive_key(shared)
 
-            # send dh_temp reply
             dh_server = {"type": "dh_temp", "B": str(pub)}
             conn.send(json.dumps(dh_server).encode())
 
-            # 4) Receive encrypted auth payload (register/login) encrypted with temp_key
             data = conn.recv(8192)
             if not data:
                 return
@@ -133,39 +119,30 @@ class SecureChatServer:
                 conn.send(json.dumps({"error": f"decryption failed: {e}"}).encode())
                 return
 
-            # auth_data must have username and password (clear here); we'll salt/hash server-side
             username = auth_data.get("username")
             password = auth_data.get("password")
             if not username or not password:
                 conn.send(json.dumps({"error": "missing credentials"}).encode())
                 return
 
-            # Register or login
             if auth_msg["type"] == "register":
-                # Let Database handle salting and hashing
                 if not self.db.add_user(username, password):
                     conn.send(json.dumps({"error": "username taken"}).encode())
                     return
             else:
-                # login path: verify credentials using Database helper
                 if not self.db.verify_user(username, password):
                     conn.send(json.dumps({"error": "invalid credentials"}).encode())
                     return
 
-            # Send success
             conn.send(json.dumps({"success": True}).encode())
 
-            # Start session transcript using the exact exchanged message dicts
-            # Use deterministic session_id matching client: username-server-cn-timestamp
             session_id = f"{username}-{get_common_name(self.cert)}-{hello_json['ts']}"
             transcript = Transcript(session_id)
-            # append the raw Hello JSON we received and the ServerHello dict we sent
             transcript.append(hello_json)
             transcript.append(server_hello)
 
             print(f"[DEBUG] After Hello/ServerHello, transcript has {len(transcript.entries)} entries")
 
-            # 5) Perform session DH: receive client's session DH public
             data = conn.recv(8192)
             if not data:
                 return
@@ -175,51 +152,38 @@ class SecureChatServer:
                 return
 
             a_pub = int(dh_client_session["A"])
-            # server session private
+
             s_priv = gen_private_key()
             s_pub = get_public_value(s_priv)
             shared_session = get_shared_secret(s_priv, a_pub)
-            session_key = derive_key(shared_session)  # AES session key (16 bytes)
+            session_key = derive_key(shared_session)
 
-            # CRITICAL FIX: Append DHClient to transcript
             transcript.append(DHClient(e=str(a_pub)))
             print(f"[DEBUG] After DHClient, transcript has {len(transcript.entries)} entries")
 
-            # CRITICAL FIX: Sign the transcript BEFORE appending DHServer
-            # The signature is computed over: Hello + ServerHello + DHClient
-            # This is what the client will verify
             exported_before_dhserver = transcript.export_for_signing()
-            exported_json = json.dumps(exported_before_dhserver, sort_keys=True, separators=(",", ":")).encode()
+            exported_json = json.dumps(
+                exported_before_dhserver,
+                sort_keys=True,
+                separators=(",", ":")
+            ).encode()
 
             print(f"[DEBUG] Signing transcript with {len(transcript.entries)} entries")
             print(f"[DEBUG] server signing sha256: {sha256_hex(exported_json)}")
 
-            # Sign the transcript (Hello + ServerHello + DHClient)
             sig = sign_message(self.private_key, exported_json)
             sig_b64 = b64e(sig)
 
-            # NOW append DHServer WITH the signature included
-            # This matches what the client does - it receives DHServer with signature populated
             final_dh_server = DHServer(f=str(s_pub), signature=sig_b64)
             transcript.append(final_dh_server)
 
             print(f"[DEBUG] After DHServer, transcript has {len(transcript.entries)} entries")
 
-            # Export the final transcript (for debugging)
-            re_exported = transcript.export_for_signing()
-            re_exported_json = json.dumps(re_exported, sort_keys=True, separators=(",", ":")).encode()
-            
-            print(f"[DEBUG] server canonical transcript sha256: {sha256_hex(re_exported_json)}")
-            print(f"[DEBUG] server canonical transcript JSON: {re_exported_json.decode()}")
-
-            # Send DH session response with signature to client
             dh_server_session = {"type": "dh_session", "B": str(s_pub), "signature": sig_b64}
             conn.send(json.dumps(dh_server_session).encode())
 
-            # store session
             self.sessions[transcript.session_id] = (session_key, transcript, client_cert)
 
-            # 6) Now message loop: decrypt/verify incoming Msg objects, then sign receipt
             seq_expected = 0
             while True:
                 data = conn.recv(8192)
@@ -227,23 +191,23 @@ class SecureChatServer:
                     break
                 msg_json = json.loads(data.decode())
                 if msg_json.get("type") != "msg":
-                    # ignore unexpected or send error
                     continue
 
                 msg = Msg(**msg_json)
-                # check seq
+
                 if msg.seq != seq_expected + 1:
                     print(f"Invalid sequence: {msg.seq} expected {seq_expected + 1}")
                     break
 
-                # verify signature: recompute h = SHA256(seq||ts||ct)
-                digest_bytes = __import__("hashlib").sha256(f"{msg.seq}{msg.ts}{msg.payload}".encode()).digest()
+                digest_bytes = __import__("hashlib").sha256(
+                    f"{msg.seq}{msg.ts}{msg.payload}".encode()
+                ).digest()
+
                 sender_pub = client_cert.public_key()
                 if not verify_signature(sender_pub, digest_bytes, b64d(msg.signature)):
                     print("Message signature verification failed")
                     break
 
-                # decrypt ciphertext
                 try:
                     plaintext = decrypt_aes_ecb_b64(session_key, msg.payload).decode()
                 except Exception as e:
@@ -254,20 +218,25 @@ class SecureChatServer:
                 transcript.append(msg)
                 seq_expected = msg.seq
 
-                # sign receipt and return
-                receipt_sig = sign_message(self.private_key, f"{transcript.session_id}:{seq_expected}".encode())
+                receipt_sig = sign_message(
+                    self.private_key,
+                    f"{transcript.session_id}:{seq_expected}".encode()
+                )
                 receipt = Receipt(seq=seq_expected, signature=b64e(receipt_sig))
-                # send receipt as plain JSON dict
-                conn.send(json.dumps(receipt.model_dump()).encode())
+
+                conn.send(json.dumps(receipt.dict()).encode())
                 transcript.append(receipt)
 
-            # session ended; sign final transcript and save
             final_export = transcript.export_for_signing()
-            final_json = json.dumps(final_export, sort_keys=True, separators=(",", ":")).encode()
-            
+            final_json = json.dumps(
+                final_export,
+                sort_keys=True,
+                separators=(",", ":")
+            ).encode()
+
             print(f"[DEBUG] server final transcript sha256: {sha256_hex(final_json)}")
             print(f"[DEBUG] server final transcript JSON: {final_json.decode()}")
-            
+
             final_sig = sign_message(self.private_key, final_json)
             sig_path = Path(f"{transcript.path}.sig")
             with open(sig_path, "wb") as f:
@@ -279,9 +248,10 @@ class SecureChatServer:
             import traceback
             traceback.print_exc()
 
-# helper: load cert from PEM bytes using cryptography
+
 def load_certificate_bytes(pem_bytes: bytes) -> x509.Certificate:
     return x509.load_pem_x509_certificate(pem_bytes)
+
 
 def main():
     parser = argparse.ArgumentParser(description="Run secure chat server")
@@ -292,7 +262,6 @@ def main():
     parser.add_argument("--ca-cert", default="certs/ca/ca.crt")
     args = parser.parse_args()
 
-    # ensure DB tables exist
     try:
         db = Database()
         db.initialize_tables()
@@ -311,6 +280,7 @@ def main():
         import traceback
         traceback.print_exc()
         sys.exit(1)
+
 
 if __name__ == "__main__":
     main()
